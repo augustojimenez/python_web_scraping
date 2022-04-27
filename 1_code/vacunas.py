@@ -1,95 +1,84 @@
 # Required libraries
 import os
-import pandas as pd
 import locale
+import requests
+import pandas as pd
+import requests_html
 
-from time import sleep
 from datetime import datetime as dt
-from selenium import webdriver
-
-# Project directory
-os.chdir(r'C:\Users\Augus\OneDrive\Documents\Proyectos\Python Web Scraping - Vaccines')
+from requests.adapters import HTTPAdapter
+from requests.packages.urllib3.util.retry import Retry
 
 # Function to update daily cumulative administered vaccines
-def get_new_data(sleep_time = 0):
+def get_new_data():
     locale.setlocale(locale.LC_ALL, 'es_ES.UTF-8')
 
     link = 'https://vacunate.gob.do/'
 
-    opts = webdriver.ChromeOptions()
-    #opts.headless = True
-
-    driver = webdriver.Chrome(executable_path = r'C:\Users\Augus\OneDrive\Documents\Proyectos\Python Web Scraping - Vaccines\driver\chromedriver.exe', options = opts)
-    sleep(sleep_time)
+    retry_strategy = Retry(
+        total = 3,
+        status_forcelist = [408, 429, 500, 502, 503, 504],
+        method_whitelist = ["HEAD", "GET", "OPTIONS"])
     
-    # Extracting date and doses administered
-    try:
-        driver.get(link)
-        sleep(sleep_time)
-        fecha = driver.find_element_by_xpath('/html/body/div/div/section[2]/div/div[1]/h3/span').text
-        fecha = driver.find_element_by_xpath('//*[@id="root"]/section[2]/div/div[1]/h5').text
-        dosis_1 = driver.find_element_by_xpath('//*[@id="root"]/section[2]/div/div[2]/div/div[1]/div/div/span').text
-        dosis_2 = driver.find_element_by_xpath('//*[@id="root"]/section[2]/div/div[2]/div/div[2]/div/div/span').text
-        dosis_3 = driver.find_element_by_xpath('//*[@id="root"]/section[2]/div/div[2]/div/div[3]/div/div/span').text
-        dosis_total = driver.find_element_by_xpath('//*[@id="root"]/section[2]/div/div[2]/div/div[4]/div/div/span').text
-    except:
-        driver.close()
-        return None
+    adapter = HTTPAdapter(max_retries = retry_strategy)
 
-    driver.close()
+    session = requests_html.HTMLSession()
+    session.mount("https://", adapter)
+    r = session.get(link)
+    r.html.render(sleep=5, timeout=8)
+
+    # Extracting date and doses administered
+    date = r.html.xpath('/html/body/div/div/section[2]/div/div[1]/h3/span/text()')[0]
+    dose_1 = r.html.xpath('/html/body/div/div/section[2]/div/div[1]/div/div[1]/div[1]/text()')[0]
+    dose_2 = r.html.xpath('/html/body/div/div/section[2]/div/div[1]/div/div[2]/div[1]/text()')[0]
+    dose_3 = r.html.xpath('/html/body/div/div/section[2]/div/div[1]/div/div[3]/div[1]/text()')[0]
+    dose_total = r.html.xpath('/html/body/div/div/section[2]/div/div[1]/div/div[4]/div[1]/text()')[0]
+    
+    session.close()
+    r.close()
 
     # Formatting date
-    fecha = fecha.replace('Acumulados al', '').strip()
-    fecha = fecha.replace(' de', '').strip()
-    fecha = dt.strptime(fecha, '%d %B %Y')
+    date = date.replace('| Acumulados al', '').strip()
+    date = dt.strptime(date, '%d de %B de %Y')
 
     # Formatting numbers
-    dosis_1 = int(dosis_1.replace(',', '').strip())
-    dosis_2 = int(dosis_2.replace(',', '').strip())
-    dosis_3 = int(dosis_3.replace(',', '').strip())
-    dosis_total = int(dosis_total.replace(',', '').strip())
+    dose_1 = int(dose_1.replace(',', '').strip())
+    dose_2 = int(dose_2.replace(',', '').strip())
+    dose_3 = int(dose_3.replace(',', '').strip())
+    dose_total = int(dose_total.replace(',', '').strip())
 
     # Creating DataFrame with new data
     new_data = pd.DataFrame(data = {
-        'fecha' : [fecha],
-        'dosis_1' : [dosis_1],
-        'dosis_2' : [dosis_2],
-        'dosis_3' : [dosis_3],
-        'dosis_total' : [dosis_total]})
+        'date' : [date],
+        'dose_1' : [dose_1],
+        'dose_2' : [dose_2],
+        'dose_3' : [dose_3],
+        'dose_total' : [dose_total]})
     
     return new_data
 
 # Creating DataFrame with new data
-is_none = True
-n = 0
-while is_none:
-    print(str(n) + " try.")
-    new_data = get_new_data(sleep_time = n)
-    if (n < 10):
-        n = n + 1
-        is_none = new_data is None
-    else:
-        is_none = False
+new_data = get_new_data()
 
 # Importing base DataFrame
-old_data = pd.read_csv('./2_data/vacunas.csv')
-old_data['fecha'] = pd.to_datetime(old_data['fecha'])
+old_data = pd.read_csv('./2_data/vaccines.csv')
+old_data['date'] = pd.to_datetime(old_data['date'])
 
 # Comapring new_date against old_date
-old_date = old_data['fecha'].max()
-new_date = new_data['fecha'].max()
+old_date = old_data['date'].max()
+new_date = new_data['date'].max()
 
 if(new_date > old_date):
-    print("\n Nueva data:")
+    print("\nNew data:")
     print(new_data.head())
     print("\n")
     
     # Merging and exporting complete vaccination data
-    vacunas = pd.concat([old_data, new_data])
-    vacunas.to_csv('./2_data/vacunas.csv', index = 0)
+    vaccines = pd.concat([old_data, new_data])
+    vaccines.to_csv('./2_data/vaccines.csv', index = 0)
     
-    print('Actualización realizada.')
+    print('Updates done.')
 else:
-    print('No hay nuevos datos para actualizar.')
+    print('No new data available.')
 
-input("Presione cualquier tecla para terminar.")
+input("Press any button to finish.")
